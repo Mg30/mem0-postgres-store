@@ -2,7 +2,12 @@
 
 PostgreSQL history and recent-message persistence for **Mem0 OSS 2.2.1**, with
 transaction-scoped tenant isolation across history, messages, vector memories,
-and entity vectors. Python 3.12; managed, tested, built, and published with **uv**.
+and entity vectors. Python 3.12; SQLAlchemy 2.0 and psycopg 3.
+
+- Replaces SQLite history and recent-message storage with PostgreSQL.
+- Enforces row-level security with transaction-scoped tenant context on both pools.
+- Ships Alembic migrations, including pgvector tables and tenant policies.
+- Tests storage and SDK integration against real PostgreSQL with Testcontainers.
 
 ## The problem this solves
 
@@ -18,16 +23,16 @@ not an HTTP server. Existing SQLite data is **not automatically imported**.
 
 ## Install
 
-Until a release is published, install from the repository:
-
-```bash
-uv add 'mem0-postgres-store @ git+https://github.com/Mg30/mem0-postgres-store.git'
-```
-
-After publication to PyPI:
+Install the [published package from PyPI](https://pypi.org/project/mem0-postgres-store/):
 
 ```bash
 uv add mem0-postgres-store
+```
+
+To use the current repository source instead:
+
+```bash
+uv add 'mem0-postgres-store @ git+https://github.com/Mg30/mem0-postgres-store.git'
 ```
 
 The dependency pins `mem0ai==2.2.1`. Other SDK versions are rejected. For development:
