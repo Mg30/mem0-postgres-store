@@ -9,7 +9,7 @@ from psycopg_pool import ConnectionPool
 from sqlalchemy.orm import Session
 
 from .context import current_tenant
-from .schema import SCHEMA, TABLE_NAMES, VECTOR_COLLECTIONS
+from .schema import APPEND_ONLY_TABLES, SCHEMA, TABLE_NAMES, VECTOR_COLLECTIONS
 
 
 class Database:
@@ -93,6 +93,16 @@ class Database:
                     {"table": f"{SCHEMA}.{table}"},
                 ).scalar_one():
                     raise PermissionError("Runtime role must not have TRUNCATE privileges")
+                if (
+                    table in APPEND_ONLY_TABLES
+                    and connection.execute(
+                        sa.text("SELECT has_any_column_privilege(current_user, :table, 'UPDATE')"),
+                        {"table": f"{SCHEMA}.{table}"},
+                    ).scalar_one()
+                ):
+                    raise PermissionError(
+                        f"Runtime role must not UPDATE {SCHEMA}.{table}; apply all migrations"
+                    )
             if connection.execute(
                 sa.text("SELECT has_schema_privilege(current_user, :schema, 'CREATE')"),
                 {"schema": SCHEMA},

@@ -1,7 +1,9 @@
 import asyncio
 import json
+import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from uuid import uuid4
 
 import psycopg
@@ -36,7 +38,7 @@ class FakeLLM:
 
 
 @pytest.fixture
-def sdk_config(database, monkeypatch, tmp_path):
+def sdk_config(database, monkeypatch):
     monkeypatch.setattr(EmbedderFactory, "create", lambda *a, **kw: FakeEmbeddings())
     monkeypatch.setattr(LlmFactory, "create", lambda *a, **kw: FakeLLM())
     # Exercise real entity persistence/search without downloading spaCy models.
@@ -57,7 +59,8 @@ def sdk_config(database, monkeypatch, tmp_path):
         "embedder": {"provider": "openai", "config": {"model": "fake", "embedding_dims": 3}},
     }
     yield config
-    assert not list(tmp_path.rglob("*.db"))
+    # Mem0's default history_db_path lives in MEM0_DIR (set in conftest).
+    assert not list(Path(os.environ["MEM0_DIR"]).rglob("*.db"))
 
 
 def test_sync_sdk_operations_metadata_and_reinitialization(sdk_config, tenant):
