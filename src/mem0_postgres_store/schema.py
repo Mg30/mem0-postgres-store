@@ -5,6 +5,7 @@ import sqlalchemy as sa
 SCHEMA = "mem0_store"
 VECTOR_COLLECTIONS = ("mem0_vectors", "mem0_vectors_entities")
 TABLE_NAMES = ("history", "messages", *VECTOR_COLLECTIONS)
+APPEND_ONLY_TABLES = ("history", "messages")
 metadata = sa.MetaData(schema=SCHEMA)
 
 history = sa.Table(

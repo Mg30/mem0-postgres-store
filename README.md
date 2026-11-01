@@ -62,7 +62,7 @@ non-owner with `NOBYPASSRLS`, no privileged role memberships, and no schema CREA
 TRUNCATE, DROP, or migration privileges. Do not grant it membership in the owner
 role. Never supply the migration URL to an application.
 
-The packaged Alembic revision creates:
+The packaged Alembic revisions create:
 
 | Table in `mem0_store` | Purpose |
 | --- | --- |
@@ -73,9 +73,12 @@ The packaged Alembic revision creates:
 
 All tables have indexed, explicit `tenant_id` columns, enabled **and forced** RLS,
 and policies with both `USING` and `WITH CHECK` for all DML. A restrictive tenant
-guard prevents additional permissive policies from broadening access. Runtime
-startup verifies role attributes, owner membership, RLS flags, destructive
-privileges, and embedding dimensions. DBAs remain responsible for policy integrity.
+guard prevents additional permissive policies from broadening access. The runtime
+role has only `SELECT`, `INSERT`, and `DELETE` (for tenant reset) on `history` and
+`messages`, so audit rows cannot be rewritten; vector tables also allow `UPDATE`.
+Runtime startup verifies role attributes, owner membership, RLS flags, destructive
+and `UPDATE`-on-history privileges (so an un-upgraded database fails clearly), and
+embedding dimensions. DBAs remain responsible for policy integrity.
 
 Migrations are packaged in the wheel. The migration command above is a small
 configuration wrapper around Alembic `upgrade head`. For direct Alembic usage:
@@ -274,9 +277,13 @@ explicit bootstrap instead changes three process-local integration points:
 
 Package import alone changes none of them. Install before creating any SDK
 instances: existing objects are not retrofitted, and their existence cannot be
-reliably detected. One Database binding is supported per process. Repeated install
-with the same instance is safe; changing it or conflicting patches are rejected.
-There is no live uninstall/rebind; restart the worker to change infrastructure.
+reliably detected. One open Database binding is supported per process. Repeated
+install with the same instance is safe; conflicting patches are rejected. Installing
+a different Database is rejected while the current one is open, and allowed once it
+is closed, so repeated application lifespans in one process (for example several
+FastAPI `TestClient` blocks in a test suite) work. SDK instances created against the
+closed Database keep failing closed; create new `Memory`/`AsyncMemory` instances
+after rebinding. There is no uninstall.
 All ordinary Mem0 pgvector instances in that process use this registration.
 Other vector providers are outside the security guarantee and must not be used.
 

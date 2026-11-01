@@ -1,8 +1,12 @@
+import itertools
+import random
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 import pytest
 import sqlalchemy as sa
+from mem0.memory.storage import SQLiteManager
 
 from mem0_postgres_store import (
     PostgresHistoryStore,
@@ -56,6 +60,44 @@ def test_history_roundtrip_batch_order_and_metadata(store, tenant):
         assert rows[3]["is_deleted"] is True
         assert store.get_history("missing") == []
         store.batch_add_history([])
+
+
+def test_history_order_matches_upstream_sqlite_manager(store, tenant):
+    # Upstream SQLiteManager is the reference oracle here, not a PostgreSQL substitute.
+    created = [None, "", "a", "2026-01-02", "2026-01-02T10:00:00", "2026-01-02T10:00:00+00:00"]
+    updated = [
+        None,
+        "garbage",
+        "2026-01-03",
+        "2026-01-03 00:00",
+        "2026-01-02T23:59:59Z",
+        "2026-01-03T01:00:00+01:00",
+        "2026-01-03T00:00:00.999999",
+    ]
+    combos = list(itertools.product(created, updated))
+    random.Random(7).shuffle(combos)
+    records = [
+        {"memory_id": "m", "new_memory": str(i), "event": "ADD", "created_at": c, "updated_at": u}
+        for i, (c, u) in enumerate(combos)
+    ]
+    reference = SQLiteManager(":memory:")
+    try:
+        reference.batch_add_history(records)
+        expected = reference.get_history("m")
+    finally:
+        reference.close()
+    with tenant_scope(tenant):
+        store.batch_add_history(records)
+        actual = store.get_history("m")
+    # Upstream has no tie-break, so compare sort keys and returned field values only.
+    keys = ("created_at", "updated_at")
+    assert [tuple(r[k] for k in keys) for r in actual] == [
+        tuple(r[k] for k in keys) for r in expected
+    ]
+    strip = ("id", "new_memory")
+    assert Counter(tuple(v for k, v in r.items() if k not in strip) for r in actual) == Counter(
+        tuple(v for k, v in r.items() if k not in strip) for r in expected
+    )
 
 
 def test_messages_retention_order_limits_and_scope(store, tenant):

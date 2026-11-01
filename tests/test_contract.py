@@ -104,3 +104,18 @@ def test_bootstrap_rejects_rebinding_and_telemetry(database, postgres, monkeypat
     monkeypatch.setattr(main, "MEM0_TELEMETRY", True)
     with pytest.raises(CompatibilityError, match="MEM0_TELEMETRY"):
         install(database)
+
+
+@pytest.mark.integration
+def test_bootstrap_rebinds_after_previous_database_closed(database, postgres, monkeypatch):
+    # Repeated application lifespans in one process (e.g. FastAPI TestClient).
+    from mem0_postgres_store import Database, PostgresHistoryStore, integration
+
+    previous = Database(postgres.runtime_url, embedding_dimensions=3)
+    stale = PostgresHistoryStore(previous)
+    previous.close()
+    monkeypatch.setattr(integration, "_database", previous)
+    install(database)
+    assert integration.installed_database() is database
+    with pytest.raises(RuntimeError, match="closed"), tenant_scope("tenant"):
+        stale.get_history("id")

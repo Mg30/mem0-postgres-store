@@ -7,6 +7,7 @@ import pytest
 import sqlalchemy as sa
 
 from mem0_postgres_store import Database, tenant_scope
+from mem0_postgres_store.schema import APPEND_ONLY_TABLES
 
 pytestmark = pytest.mark.integration
 TABLES = ["history", "messages", "mem0_vectors", "mem0_vectors_entities"]
@@ -31,17 +32,23 @@ def test_rls_all_commands_and_missing_setting(postgres, table, tenant):
                 ).fetchall()
                 == []
             )
-            assert (
-                conn.execute(
-                    f"UPDATE mem0_store.{table} SET tenant_id=%s WHERE id=%s",
-                    (tenant + "-B", record_id),
-                ).rowcount
-                == 0
-            )
+            if table not in APPEND_ONLY_TABLES:
+                assert (
+                    conn.execute(
+                        f"UPDATE mem0_store.{table} SET tenant_id=%s WHERE id=%s",
+                        (tenant + "-B", record_id),
+                    ).rowcount
+                    == 0
+                )
             assert (
                 conn.execute(f"DELETE FROM mem0_store.{table} WHERE id=%s", (record_id,)).rowcount
                 == 0
             )
+        if table in APPEND_ONLY_TABLES:
+            # History and message rows are immutable for the runtime role, even in-tenant.
+            with pytest.raises(psycopg.errors.InsufficientPrivilege), conn.transaction():
+                conn.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
+                conn.execute(f"UPDATE mem0_store.{table} SET id=id WHERE id=%s", (record_id,))
         with pytest.raises(psycopg.errors.InsufficientPrivilege), conn.transaction():
             conn.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant + "-B",))
             conn.execute(
@@ -107,6 +114,17 @@ def test_privileged_roles_and_dimensions_rejected(postgres):
         Database(postgres.migration_url, embedding_dimensions=3)
     with pytest.raises(ValueError, match="dimensions"):
         Database(postgres.runtime_url, embedding_dimensions=4)
+
+
+def test_runtime_update_on_append_only_tables_rejected(postgres):
+    url = postgres.migration_url.replace("+psycopg", "")
+    with psycopg.connect(url, autocommit=True) as conn:
+        conn.execute("GRANT UPDATE ON mem0_store.history TO mem0_runtime")
+        try:
+            with pytest.raises(PermissionError, match="UPDATE"):
+                Database(postgres.runtime_url, embedding_dimensions=3)
+        finally:
+            conn.execute("REVOKE UPDATE ON mem0_store.history FROM mem0_runtime")
 
 
 def test_database_unavailable():

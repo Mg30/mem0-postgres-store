@@ -75,8 +75,10 @@ def _check_compatibility() -> None:
 def install(database: Database) -> None:
     """Call once at process startup, before any Memory/AsyncMemory instances exist.
 
-    Repeated calls with the same Database are harmless. Rebinding a running
-    process to a different Database is rejected; restart to change infrastructure.
+    Repeated calls with the same Database are harmless. A different Database may
+    replace the installed one only after that one is closed (for example, repeated
+    application lifespans in one test process); rebinding an open Database is rejected.
+    SDK instances created against a closed Database keep failing closed.
     """
     global _database
     with _LOCK:
@@ -89,12 +91,13 @@ def install(database: Database) -> None:
             raise CompatibilityError("Set MEM0_TELEMETRY=false before importing Mem0")
         if _database is not None:
             if (
-                _database is not database
+                (_database is not database and not _database.closed)
                 or main.SQLiteManager is not _history_factory
                 or VectorStoreFactory.provider_to_class.get("pgvector") != _PROVIDER
                 or main.concurrent is not _concurrent
             ):
                 raise CompatibilityError("Already installed with a different database or bindings")
+            _database = database
             return
         if (
             main.SQLiteManager is not storage.SQLiteManager
