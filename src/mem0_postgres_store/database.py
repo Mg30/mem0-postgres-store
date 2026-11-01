@@ -96,7 +96,7 @@ class Database:
                 if (
                     table in APPEND_ONLY_TABLES
                     and connection.execute(
-                        sa.text("SELECT has_table_privilege(current_user, :table, 'UPDATE')"),
+                        sa.text("SELECT has_any_column_privilege(current_user, :table, 'UPDATE')"),
                         {"table": f"{SCHEMA}.{table}"},
                     ).scalar_one()
                 ):

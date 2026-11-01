@@ -116,15 +116,24 @@ def test_privileged_roles_and_dimensions_rejected(postgres):
         Database(postgres.runtime_url, embedding_dimensions=4)
 
 
-def test_runtime_update_on_append_only_tables_rejected(postgres):
+@pytest.mark.parametrize("table,column", [("history", "new_memory"), ("messages", "content")])
+@pytest.mark.parametrize("column_only", [False, True], ids=["table-grant", "column-grant"])
+def test_runtime_update_on_append_only_tables_rejected(postgres, table, column, column_only):
     url = postgres.migration_url.replace("+psycopg", "")
+    relation = psycopg.sql.Identifier("mem0_store", table)
+    privilege = (
+        psycopg.sql.SQL("UPDATE ({})").format(psycopg.sql.Identifier(column))
+        if column_only
+        else psycopg.sql.SQL("UPDATE")
+    )
     with psycopg.connect(url, autocommit=True) as conn:
-        conn.execute("GRANT UPDATE ON mem0_store.history TO mem0_runtime")
+        conn.execute(psycopg.sql.SQL("GRANT {} ON {} TO mem0_runtime").format(privilege, relation))
         try:
-            with pytest.raises(PermissionError, match="UPDATE"):
-                Database(postgres.runtime_url, embedding_dimensions=3)
+            with pytest.raises(PermissionError, match=rf"must not UPDATE mem0_store\.{table}"):
+                with Database(postgres.runtime_url, embedding_dimensions=3):
+                    pass
         finally:
-            conn.execute("REVOKE UPDATE ON mem0_store.history FROM mem0_runtime")
+            conn.execute(psycopg.sql.SQL("REVOKE UPDATE ON {} FROM mem0_runtime").format(relation))
 
 
 def test_database_unavailable():
