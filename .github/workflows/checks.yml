@@ -17,30 +17,66 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.7.13"
+          version: "0.13.6"
+          python-version: "3.12"
           enable-cache: true
       - run: uv sync --frozen
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run mypy
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen ruff format --check .
+      - run: uv run --frozen mypy
 
-  test:
-    name: PostgreSQL integration tests
+  test-python:
+    name: PostgreSQL tests (Python ${{ matrix.python-version }})
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.7.13"
+          version: "0.13.6"
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
       - run: uv sync --frozen
-      - run: uv run pytest --junitxml=test-results.xml
+      - run: uv run --frozen pytest --junitxml=test-results.xml
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: distributions
+          path: dist
+      - name: Check wheel import and packaged migrations
+        env:
+          MEM0_TELEMETRY: "false"
+        run: |
+          uv run --no-project --with dist/*.whl python - <<'PY'
+          from importlib.resources import files
+          import mem0_postgres_store
+          from mem0_postgres_store.integration import _check_compatibility
+
+          _check_compatibility()
+          migrations = files("mem0_postgres_store").joinpath("migrations/versions")
+          for revision in ("0001_storage.py", "0002_append_only_history.py"):
+              assert migrations.joinpath(revision).is_file(), revision
+          PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: test-results
+          name: test-results-${{ matrix.python-version }}
           path: test-results.xml
+
+  test:
+    name: PostgreSQL integration tests
+    needs: test-python
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every Python version to pass
+        env:
+          TEST_RESULT: ${{ needs.test-python.result }}
+        run: test "$TEST_RESULT" = "success"
 
   build:
     name: Build distribution
@@ -49,11 +85,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.7.13"
+          version: "0.13.6"
+          python-version: "3.12"
       - run: uv build --no-sources
-      - name: Check wheel import and packaged migrations
-        run: |
-          uv run --no-project --python 3.12 --with dist/*.whl python -c "from importlib.resources import files; import mem0_postgres_store; assert files('mem0_postgres_store').joinpath('migrations/versions/0001_storage.py').is_file()"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: distributions
