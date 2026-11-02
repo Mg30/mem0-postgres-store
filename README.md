@@ -2,7 +2,7 @@
 
 PostgreSQL history and recent-message persistence for **Mem0 OSS 2.2.1**, with
 transaction-scoped tenant isolation across history, messages, vector memories,
-and entity vectors. Python 3.12; SQLAlchemy 2.0 and psycopg 3.
+and entity vectors. Python 3.12+; SQLAlchemy 2.0 and psycopg 3.
 
 - Replaces SQLite history and recent-message storage with PostgreSQL.
 - Enforces row-level security with transaction-scoped tenant context on both pools.
@@ -35,13 +35,8 @@ To use the current repository source instead:
 uv add 'mem0-postgres-store @ git+https://github.com/Mg30/mem0-postgres-store.git'
 ```
 
-The dependency pins `mem0ai==2.2.1`. Other SDK versions are rejected. For development:
-
-```bash
-git clone https://github.com/Mg30/mem0-postgres-store.git
-cd mem0-postgres-store
-uv sync --frozen
-```
+Requires Python 3.12 or newer (Python 3). The dependency pins `mem0ai==2.2.1`;
+other SDK versions are rejected.
 
 ## Prepare PostgreSQL
 
@@ -152,8 +147,7 @@ database.close()  # At application shutdown, after all requests have finished.
 
 Provider configuration and credentials belong to your application. The example
 uses the SDK's OpenAI providers; other SDK model providers can be configured.
-`infer=False` avoids LLM extraction but still requires an embedder. CI uses
-injected deterministic model implementations and makes no paid API calls.
+`infer=False` avoids LLM extraction but still requires an embedder.
 
 `history_db_path` is an explicit binding marker, not a filesystem path or DSN.
 `database_vector_config()` binds the SDK to the pools owned by `Database`.
@@ -270,10 +264,8 @@ remain protected by RLS.
 
 ## Architecture and compatibility
 
-The [design note](docs/design.md) records the source inspection and rejected
-alternatives. A post-construction replacement opens SQLite first; copying the
-Memory constructors into subclasses duplicates substantial upstream logic. The
-explicit bootstrap instead changes three process-local integration points:
+The explicit bootstrap changes three process-local integration points, described
+in the [design note](docs/design.md):
 
 1. `mem0.memory.main.SQLiteManager` becomes a factory for `PostgresHistoryStore`.
 2. The pgvector provider registry points at `TenantPGVector`, which inherits
@@ -294,7 +286,7 @@ Other vector providers are outside the security guarantee and must not be used.
 
 | Component | Supported / verified |
 | --- | --- |
-| Python | CPython 3.12 |
+| Python | CPython 3.12, 3.13, 3.14, 3.15 |
 | Mem0 SDK | Exactly `mem0ai==2.2.1`, audited source fingerprints |
 | PostgreSQL / pgvector | PostgreSQL 17, `pgvector/pgvector:pg17`, real Testcontainers tests |
 | SQLAlchemy / driver | SQLAlchemy 2.0, psycopg 3; SQLAlchemy history pool + psycopg vector pool |
@@ -309,8 +301,7 @@ Other vector providers are outside the security guarantee and must not be used.
   operations propagate errors; `tenant_scope` also records errors that Mem0 catches
   and raises `StorageOperationError` on otherwise successful exit. A caught error
   still marks the scope failed, even if an SDK fallback later succeeds. Inspect
-  and reconcile partial writes; blind retries can duplicate memories. The tests
-  demonstrate this limitation with an actual PostgreSQL constraint failure.
+  and reconcile partial writes; blind retries can duplicate memories.
 - **Process-global coupling.** The integration checks the installed version and
   fingerprints of audited source modules before patching. Modified wheels and
   upgrades fail clearly. It does not detect arbitrary in-memory method replacement
@@ -347,21 +338,15 @@ Other vector providers are outside the security guarantee and must not be used.
   ownership. No automatic backfill, historical-data reconstruction, memory decay,
   temporal reasoning, or consolidation is included.
 
-For an SDK upgrade, inspect all constructor/reset/storage/vector/worker call sites,
-update the exact dependency and audited fingerprints only after review, regenerate
-`uv.lock`, run the complete PostgreSQL suite, and publish a new library release.
-Minimal upstream improvements would be an injected history factory used on init
-and reset, a vector transaction context hook, worker context propagation, and
-persistence errors propagated to callers. Atomic vector/history writes require a
-shared unit-of-work contract beyond a history factory.
+## Development
 
-## Tests, lint, types, build
-
-Docker must be running. Automated database tests always use Testcontainers and
+Development uses uv 0.13.6 and requires Docker. Database tests use Testcontainers and
 never substitute SQLite or mocks for PostgreSQL. Missing Docker is a failure,
 not a silent skip. No OpenAI key or model download is required.
 
 ```bash
+git clone https://github.com/Mg30/mem0-postgres-store.git
+cd mem0-postgres-store
 uv sync --frozen
 uv run pytest
 uv run ruff check .
@@ -370,59 +355,12 @@ uv run mypy
 uv build --no-sources
 ```
 
-Tests cover contracts, real SDK flows, no SQLite connection, timestamp/metadata
-round trips, retention, reset, concurrent sync/async requests, role rejection,
-all four RLS commands, forged filters/IDs, pooled context cleanup, rollback,
-connection refusal, live database restart/recovery, and surfaced persistence failures. Mypy checks the library
-and migrations; upstream Mem0 is treated as an untyped dependency.
+CI runs the PostgreSQL suite and checks wheel installation on Python 3.12, 3.13,
+3.14, and 3.15. To run locally with a specific version, use
+`uv run --python 3.14 --frozen pytest`. Lint and type checks target Python 3.12,
+the minimum supported version.
 
-## CI and PyPI releases
+## License
 
-`checks.yml` runs Ruff, formatting, mypy, Testcontainers tests, and wheel/sdist
-build/import checks on pull requests and pushes to `main`/`master`.
-`publish.yml` runs on pushed `v*` tags, calls those same checks, verifies the tag
-matches `pyproject.toml`, downloads the checked distributions, and publishes with
-`uv publish --trusted-publishing always`. The publish job alone receives OIDC
-permission. No long-lived PyPI API token is required.
-
-Configure or verify the **PyPI Trusted Publisher** with these exact values:
-
-| Setting | Value |
-| --- | --- |
-| PyPI project | `mem0-postgres-store` |
-| GitHub owner | `Mg30` |
-| GitHub repository | `mem0-postgres-store` |
-| Workflow filename | `publish.yml` |
-| GitHub environment | `pypi` |
-
-If the PyPI project does not exist yet, use a pending publisher. A GitHub account
-connection alone is not sufficient: this repository/workflow/environment must be
-authorized in PyPI. That account-side configuration cannot be verified through
-GitHub CLI. See [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/using-a-publisher/)
-and [uv publishing](https://docs.astral.sh/uv/guides/package/).
-
-To release after configuring the publisher and reviewing the code:
-
-```bash
-# Update project.version, then regenerate and commit uv.lock with the change.
-uv lock
-uv sync --frozen
-uv run pytest
-# After committing and pushing the release version:
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-A tag publishes a real release to PyPI; choose a new version for each release.
-The initial repository push does not create a tag or publish a release.
-
-## Sources and licensing
-
-This package is MIT licensed. It depends on Mem0 (Apache-2.0) and subclasses its
-installed pgvector backend; it does not vendor Mem0 source. Inspected references:
-[Mem0 v2.2.1](https://github.com/mem0ai/mem0/tree/v2.2.1),
-[history storage](https://github.com/mem0ai/mem0/blob/v2.2.1/mem0/memory/storage.py),
-[pgvector](https://github.com/mem0ai/mem0/blob/v2.2.1/mem0/vector_stores/pgvector.py),
-and the [community history patch](https://github.com/nocyphr/mem0-history-db-patch).
-The community patch declares MIT in its README and package metadata. It was used
-only for architectural comparison; no community patch code was copied or installed.
+[MIT](LICENSE). Depends on [Mem0](https://github.com/mem0ai/mem0/tree/v2.2.1)
+(Apache-2.0); no Mem0 source is vendored.
